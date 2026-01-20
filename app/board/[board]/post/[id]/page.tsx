@@ -12,6 +12,8 @@ type PostRow = {
   content: string
   author_anon_id: string
   created_at: string
+  report_count: number | null
+  hidden?: boolean
 }
 
 type CommentRow = {
@@ -20,6 +22,7 @@ type CommentRow = {
   content: string
   author_anon_id: string
   created_at: string
+  report_count: number | null
 }
 
 function safeDecode(v: string) {
@@ -52,6 +55,7 @@ export default function PostPage() {
   const [content, setContent] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
+  const [toast, setToast] = useState<string | null>(null)
 
   const loadAll = async () => {
     setLoading(true)
@@ -60,10 +64,10 @@ export default function PostPage() {
       .from('posts')
       .select('*')
       .eq('id', id)
-      .eq('hidden', false)
       .maybeSingle()
 
-    setPost((p as any) ?? null)
+    if ((p as any)?.hidden) setPost(null)
+    else setPost((p as any) ?? null)
 
     const { data: cs } = await supabase
       .from('comments')
@@ -72,13 +76,35 @@ export default function PostPage() {
       .eq('hidden', false)
       .order('created_at', { ascending: false })
 
-    setComments((cs as any) ?? [])
+    setComments((cs ?? []) as CommentRow[])
     setLoading(false)
   }
 
   useEffect(() => {
     if (id) loadAll()
   }, [id])
+
+  const reportPost = async () => {
+    setToast(null)
+    const { error } = await supabase.from('post_reports').insert({
+      post_id: id,
+      reporter_anon_id: anonId,
+    })
+    if (error) return setToast('이미 신고했거나, 잠시 후 다시 시도해줘.')
+    setToast('게시글 신고 접수됨. (누적 3회면 자동 숨김)')
+    loadAll()
+  }
+
+  const reportComment = async (commentId: string) => {
+    setToast(null)
+    const { error } = await supabase.from('comment_reports').insert({
+      comment_id: commentId,
+      reporter_anon_id: anonId,
+    })
+    if (error) return setToast('이미 신고했거나, 잠시 후 다시 시도해줘.')
+    setToast('댓글 신고 접수됨. (누적 3회면 자동 숨김)')
+    loadAll()
+  }
 
   const submitComment = async () => {
     setError(null)
@@ -107,26 +133,39 @@ export default function PostPage() {
       <div className="max-w-3xl mx-auto space-y-6">
         <header className="space-y-2">
           <h1 className="text-2xl font-bold">{board} 게시판</h1>
-          <p className="text-sm text-zinc-400">게시글 상세 · 댓글</p>
+          <p className="text-xs text-zinc-400">
+            ※ 실명/비방 금지 · 신고 3회 누적 시 자동 숨김
+          </p>
+          {toast && <div className="text-sm text-emerald-300">{toast}</div>}
         </header>
 
         {loading ? (
           <div className="text-zinc-400">불러오는 중…</div>
         ) : !post ? (
           <section className="bg-zinc-900 rounded-xl p-4 text-zinc-300">
-            게시글을 찾을 수 없습니다.
+            게시글을 찾을 수 없거나 숨김 처리되었습니다.
           </section>
         ) : (
           <section className="bg-zinc-900 rounded-xl p-4 space-y-2">
-            <div className="text-xl font-semibold">{post.title}</div>
+            <div className="flex justify-between items-start gap-3">
+              <div className="text-xl font-semibold">{post.title}</div>
+              <button
+                type="button"
+                onClick={reportPost}
+                className="text-xs px-3 py-1 rounded bg-zinc-800 hover:bg-zinc-700"
+              >
+                신고 ({post.report_count ?? 0})
+              </button>
+            </div>
+
             <div className="text-xs text-zinc-400">
               {new Date(post.created_at).toLocaleString()} · {post.author_anon_id}
             </div>
+
             <div className="whitespace-pre-line text-zinc-200 mt-3">{post.content}</div>
           </section>
         )}
 
-        {/* 댓글 */}
         <section className="bg-zinc-900 rounded-xl p-4 space-y-3">
           <div className="flex items-baseline justify-between">
             <h2 className="text-lg font-semibold">댓글</h2>
@@ -157,9 +196,19 @@ export default function PostPage() {
             <div className="space-y-2">
               {comments.map((c) => (
                 <div key={c.id} className="bg-zinc-950 rounded-lg p-3">
-                  <div className="text-xs text-zinc-400 flex justify-between">
+                  <div className="flex justify-between items-center text-xs text-zinc-400">
                     <span>{c.author_anon_id}</span>
-                    <span>{new Date(c.created_at).toLocaleString()}</span>
+                    <div className="flex items-center gap-2">
+                      <span>{new Date(c.created_at).toLocaleString()}</span>
+                      <button
+                        type="button"
+                        onClick={() => reportComment(c.id)}
+                        className="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700"
+                        title="신고 3회 누적 시 자동 숨김"
+                      >
+                        신고 ({c.report_count ?? 0})
+                      </button>
+                    </div>
                   </div>
                   <div className="mt-2 whitespace-pre-line text-zinc-200">{c.content}</div>
                 </div>

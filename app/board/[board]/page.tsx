@@ -5,17 +5,27 @@ import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 
-type Post = {
+type PostRow = {
   id: string
   board: string
   title: string
-  content: string
   author_anon_id: string
   created_at: string
+  report_count: number | null
 }
 
 function safeDecode(v: string) {
   try { return decodeURIComponent(v) } catch { return v }
+}
+
+function getAnonId() {
+  const key = 'chasjabara_anon_id'
+  let v = localStorage.getItem(key)
+  if (!v) {
+    v = `anon_${crypto.randomUUID().slice(0, 8)}`
+    localStorage.setItem(key, v)
+  }
+  return v
 }
 
 export default function BoardPage() {
@@ -24,25 +34,51 @@ export default function BoardPage() {
   const board = useMemo(() => safeDecode(rawBoard), [rawBoard])
   const boardSlug = useMemo(() => encodeURIComponent(board), [board])
 
-  const [posts, setPosts] = useState<Post[]>([])
+  const anonId = useMemo(() => getAnonId(), [])
+
+  const [posts, setPosts] = useState<PostRow[]>([])
   const [loading, setLoading] = useState(true)
+  const [toast, setToast] = useState<string | null>(null)
 
-  useEffect(() => {
-    const load = async () => {
-      setLoading(true)
-      const { data } = await supabase
-        .from('posts')
-        .select('*')
-        .eq('board', board)
-        .eq('hidden', false)
-        .order('created_at', { ascending: false })
+  const load = async () => {
+    setLoading(true)
+    const { data, error } = await supabase
+      .from('posts')
+      .select('id,board,title,author_anon_id,created_at,report_count')
+      .eq('board', board)
+      .eq('hidden', false)
+      .order('created_at', { ascending: false })
 
-      setPosts(data ?? [])
+    if (error) {
+      setToast(`[Supabase] ${error.message}`)
+      setPosts([])
       setLoading(false)
+      return
     }
 
+    setPosts((data ?? []) as PostRow[])
+    setLoading(false)
+  }
+
+  useEffect(() => {
     if (board) load()
   }, [board])
+
+  const reportPost = async (postId: string) => {
+    setToast(null)
+    const { error } = await supabase.from('post_reports').insert({
+      post_id: postId,
+      reporter_anon_id: anonId,
+    })
+
+    if (error) {
+      setToast('이미 신고했거나, 잠시 후 다시 시도해줘.')
+      return
+    }
+
+    setToast('신고 접수됨. (누적 3회면 자동 숨김)')
+    await load()
+  }
 
   return (
     <main className="min-h-screen bg-zinc-950 text-white px-5 py-10">
@@ -57,7 +93,12 @@ export default function BoardPage() {
               글쓰기
             </a>
           </div>
-          <p className="text-zinc-400 text-sm">익명 · Supabase 연동</p>
+
+          <p className="text-xs text-zinc-400">
+            ※ 실명/비방 금지 · 신고 3회 누적 시 자동 숨김
+          </p>
+
+          {toast && <div className="text-sm text-emerald-300 whitespace-pre-line">{toast}</div>}
         </header>
 
         {loading ? (
@@ -68,14 +109,26 @@ export default function BoardPage() {
           </div>
         ) : (
           <section className="space-y-3">
-            {posts.map(p => (
+            {posts.map((p) => (
               <div key={p.id} className="bg-zinc-900 rounded-xl p-4">
-                <a
-                  href={`/board/${boardSlug}/post/${p.id}`}
-                  className="text-lg font-semibold hover:underline"
-                >
-                  {p.title}
-                </a>
+                <div className="flex items-center justify-between gap-3">
+                  <a
+                    href={`/board/${boardSlug}/post/${p.id}`}
+                    className="text-lg font-semibold hover:underline"
+                  >
+                    {p.title}
+                  </a>
+
+                  <button
+                    type="button"
+                    onClick={() => reportPost(p.id)}
+                    className="text-xs px-3 py-1 rounded bg-zinc-800 hover:bg-zinc-700"
+                    title="신고 3회 누적 시 자동 숨김"
+                  >
+                    신고 ({p.report_count ?? 0})
+                  </button>
+                </div>
+
                 <div className="text-xs text-zinc-400 mt-1">
                   {new Date(p.created_at).toLocaleString()} · {p.author_anon_id}
                 </div>
