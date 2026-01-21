@@ -21,10 +21,8 @@ function tokenize(text: string) {
 }
 
 function isNicknameLike(w: string) {
-  // 너무 일반 단어 제외(대충), 2~12 글자
   if (w.length < 2 || w.length > 12) return false
   if (STOP.has(w.toLowerCase())) return false
-  // 숫자만인 토큰 제외
   if (/^\d+$/.test(w)) return false
   return true
 }
@@ -46,6 +44,7 @@ export default function TrendPage() {
           .from('posts')
           .select('id, board, title, content, created_at')
           .gte('created_at', since)
+          .eq('hidden', false)
           .order('created_at', { ascending: false })
           .limit(350)
 
@@ -55,6 +54,7 @@ export default function TrendPage() {
           .from('comments')
           .select('id, post_id, content, created_at')
           .gte('created_at', since)
+          .eq('hidden', false)
           .order('created_at', { ascending: false })
           .limit(500)
 
@@ -91,10 +91,8 @@ export default function TrendPage() {
         if (STOP.has(low)) continue
         if (w.length < 2) continue
 
-        // 키워드 TOP
         wordFreq.set(low, (wordFreq.get(low) ?? 0) + 1)
 
-        // 닉네임 후보(대충) TOP
         if (isNicknameLike(w)) {
           nameFreq.set(w, (nameFreq.get(w) ?? 0) + 1)
         }
@@ -114,7 +112,10 @@ export default function TrendPage() {
         <header className="space-y-2">
           <div className="flex items-center justify-between gap-3">
             <h1 className="text-2xl font-bold">트렌드</h1>
-            <Link href="/" className="text-sm text-zinc-400 hover:text-zinc-200">← 메인</Link>
+            <div className="flex gap-3">
+              <Link href="/analyze" className="text-sm text-zinc-400 hover:text-zinc-200">이 사람 어때</Link>
+              <Link href="/" className="text-sm text-zinc-400 hover:text-zinc-200">메인</Link>
+            </div>
           </div>
           <p className="text-zinc-400 text-sm">최근 7일 글/댓글 기준 트렌드 요약</p>
         </header>
@@ -152,7 +153,7 @@ export default function TrendPage() {
               <div className="flex items-center justify-between mb-3">
                 <div className="font-semibold">닉네임 언급 TOP 20 (추정)</div>
                 <Link href="/analyze" className="text-sm text-zinc-400 hover:text-zinc-200">
-                  → 이 사람 어때 분석하러 가기
+                  → 분석 페이지
                 </Link>
               </div>
 
@@ -162,7 +163,7 @@ export default function TrendPage() {
                     key={n}
                     href={`/analyze?name=${encodeURIComponent(n)}`}
                     className="px-3 py-1 rounded-full bg-zinc-800 hover:bg-zinc-700 text-sm"
-                    title="클릭하면 분석 페이지로"
+                    title="클릭하면 자동 분석"
                   >
                     {n} <span className="text-zinc-400">({c})</span>
                   </Link>
