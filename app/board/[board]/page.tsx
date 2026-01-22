@@ -1,7 +1,7 @@
 'use client'
-import { supabase } from '@/lib/supabaseClient'
-import { useParams } from 'next/navigation'
+
 import Link from 'next/link'
+import { useParams } from 'next/navigation'
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 
@@ -9,136 +9,132 @@ type PostRow = {
   id: string
   board: string
   title: string
-  author_anon_id: string
+  content: string
+  author: string | null
   created_at: string
-  report_count: number | null
 }
 
 function safeDecode(v: string) {
-  try { return decodeURIComponent(v) } catch { return v }
-}
-
-function getAnonId() {
-  const key = 'chasjabara_anon_id'
-  let v = localStorage.getItem(key)
-  if (!v) {
-    v = `anon_${crypto.randomUUID().slice(0, 8)}`
-    localStorage.setItem(key, v)
+  try {
+    return decodeURIComponent(v)
+  } catch {
+    return v
   }
-  return v
 }
 
 export default function BoardPage() {
   const params = useParams()
   const rawBoard = (params?.board ?? '') as string
-  const board = useMemo(() => safeDecode(rawBoard), [rawBoard])
-  const boardSlug = useMemo(() => encodeURIComponent(board), [board])
 
-  const anonId = useMemo(() => getAnonId(), [])
+  // 화면에 보여줄 보드명(디코딩)
+  const board = useMemo(() => safeDecode(rawBoard), [rawBoard])
+  // URL에 넣을 보드 slug(인코딩)
+  const boardSlug = useMemo(() => encodeURIComponent(board), [board])
 
   const [posts, setPosts] = useState<PostRow[]>([])
   const [loading, setLoading] = useState(true)
-  const [toast, setToast] = useState<string | null>(null)
+  const [errorMsg, setErrorMsg] = useState('')
 
-  const load = async () => {
-    setLoading(true)
-    const { data, error } = await supabase
-      .from('posts')
-      .select('id,board,title,author_anon_id,created_at,report_count')
-      .eq('board', board)
-      .eq('hidden', false)
-      .order('created_at', { ascending: false })
+  useEffect(() => {
+    let mounted = true
 
-    if (error) {
-      setToast(`[Supabase] ${error.message}`)
+    async function load() {
+      setLoading(true)
+      setErrorMsg('')
+
+      const { data, error } = await supabase
+        .from('posts')
+        .select('id, board, title, content, author, created_at')
+        .eq('board', board)
+        .order('created_at', { ascending: false })
+
+      if (!mounted) return
+
+      if (error) {
+        setErrorMsg(error.message ?? '게시글을 불러오지 못했습니다.')
+        setPosts([])
+      } else {
+        setPosts((data ?? []) as PostRow[])
+      }
+
+      setLoading(false)
+    }
+
+    // board 값이 비어있을 때는 로딩하지 않음
+    if (!board) {
       setPosts([])
       setLoading(false)
       return
     }
 
-    setPosts((data ?? []) as PostRow[])
-    setLoading(false)
-  }
-
-  useEffect(() => {
-    if (board) load()
-  }, [board])
-
-  const reportPost = async (postId: string) => {
-    setToast(null)
-    const { error } = await supabase.from('post_reports').insert({
-      post_id: postId,
-      reporter_anon_id: anonId,
-    })
-
-    if (error) {
-      setToast('이미 신고했거나, 잠시 후 다시 시도해줘.')
-      return
+    load()
+    return () => {
+      mounted = false
     }
-
-    setToast('신고 접수됨. (누적 3회면 자동 숨김)')
-    await load()
-  }
+  }, [board])
 
   return (
     <main className="min-h-screen bg-zinc-950 text-white px-5 py-10">
       <div className="max-w-3xl mx-auto space-y-6">
         <header className="space-y-2">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-3">
             <h1 className="text-2xl font-bold">{board} 게시판</h1>
-            <a
+
+            <Link
               href={`/board/${boardSlug}/write`}
-              className="px-4 py-2 bg-red-600 rounded-lg text-sm"
+              className="rounded-lg px-4 py-2 bg-red-600 hover:bg-red-700 text-sm"
             >
               글쓰기
-            </a>
+            </Link>
           </div>
 
-          <p className="text-xs text-zinc-400">
-            ※ 실명/비방 금지 · 신고 3회 누적 시 자동 숨김
+          <p className="text-zinc-400 text-sm">
+            이 게시판은 익명 기반으로 운영됩니다.
           </p>
-
-          {toast && <div className="text-sm text-emerald-300 whitespace-pre-line">{toast}</div>}
         </header>
 
         {loading ? (
-          <div className="text-zinc-400">불러오는 중…</div>
+          <section className="bg-zinc-900 rounded-xl p-4 text-zinc-300">
+            불러오는 중...
+          </section>
+        ) : errorMsg ? (
+          <section className="bg-zinc-900 rounded-xl p-4 text-red-300">
+            에러: {errorMsg}
+          </section>
         ) : posts.length === 0 ? (
-          <div className="bg-zinc-900 rounded-xl p-4 text-zinc-300">
-            아직 글이 없습니다.
-          </div>
+          <section className="bg-zinc-900 rounded-xl p-4 text-zinc-300">
+            아직 게시글이 없습니다.<br />
+            오른쪽 상단 <b>글쓰기</b> 버튼으로 첫 글을 작성해보세요.
+          </section>
         ) : (
           <section className="space-y-3">
             {posts.map((p) => (
-              <div key={p.id} className="bg-zinc-900 rounded-xl p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <a
-                    href={`/board/${boardSlug}/post/${p.id}`}
-                    className="text-lg font-semibold hover:underline"
-                  >
-                    {p.title}
-                  </a>
-
-                  <button
-                    type="button"
-                    onClick={() => reportPost(p.id)}
-                    className="text-xs px-3 py-1 rounded bg-zinc-800 hover:bg-zinc-700"
-                    title="신고 3회 누적 시 자동 숨김"
-                  >
-                    신고 ({p.report_count ?? 0})
-                  </button>
+              <Link
+                key={p.id}
+                href={`/board/${boardSlug}/post/${p.id}`}
+                className="block bg-zinc-900 rounded-xl p-4 hover:bg-zinc-800 transition"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="text-lg font-semibold">{p.title}</div>
+                  <div className="text-xs text-zinc-400">
+                    {new Date(p.created_at).toLocaleString()}
+                  </div>
                 </div>
 
-                <div className="text-xs text-zinc-400 mt-1">
-                  {new Date(p.created_at).toLocaleString()} · {p.author_anon_id}
+                <div className="mt-2 text-zinc-200 line-clamp-2 whitespace-pre-line">
+                  {p.content}
                 </div>
-              </div>
+
+                <div className="mt-3 text-xs text-zinc-500">
+				작성자: 익명
+                </div>
+              </Link>
             ))}
           </section>
         )}
 
-        <Link href="/" className="text-sm text-zinc-400">
-          ← 메인으로
+        <Link href="/" className="inline-block text-sm text-zinc-400 hover:text-zinc-200">
+          ← 메인으로 돌아가기
         </Link>
       </div>
     </main>
