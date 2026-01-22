@@ -4,7 +4,6 @@ import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
-import { anonymizeText } from '@/lib/anonymize'
 
 type PostRow = {
   id: string
@@ -13,6 +12,7 @@ type PostRow = {
   content: string
   author: string | null
   created_at: string
+  hidden?: boolean | null
 }
 
 function safeDecode(v: string) {
@@ -25,11 +25,15 @@ function safeDecode(v: string) {
 
 export default function BoardPage() {
   const params = useParams()
-  const rawBoard = (params?.board ?? '') as string
 
-  // 화면에 보여줄 보드명(디코딩)
-  const board = useMemo(() => safeDecode(rawBoard), [rawBoard])
-  // URL에 넣을 보드 slug(인코딩)
+  // ✅ params 안전 처리 (string | string[] | undefined)
+  const rawBoardAny = (params as any)?.board
+  const rawBoard = useMemo(() => {
+    if (Array.isArray(rawBoardAny)) return rawBoardAny[0] ?? ''
+    return typeof rawBoardAny === 'string' ? rawBoardAny : ''
+  }, [rawBoardAny])
+
+  const board = useMemo(() => safeDecode(rawBoard).trim(), [rawBoard])
   const boardSlug = useMemo(() => encodeURIComponent(board), [board])
 
   const [posts, setPosts] = useState<PostRow[]>([])
@@ -45,8 +49,9 @@ export default function BoardPage() {
 
       const { data, error } = await supabase
         .from('posts')
-        .select('id, board, title, content, author, created_at')
+        .select('id, board, title, content, author, created_at, hidden')
         .eq('board', board)
+        .eq('hidden', false)
         .order('created_at', { ascending: false })
 
       if (!mounted) return
@@ -61,7 +66,6 @@ export default function BoardPage() {
       setLoading(false)
     }
 
-    // board 값이 비어있을 때는 로딩하지 않음
     if (!board) {
       setPosts([])
       setLoading(false)
@@ -123,11 +127,11 @@ export default function BoardPage() {
                 </div>
 
                 <div className="mt-2 text-zinc-200 line-clamp-2 whitespace-pre-line">
-                  {{anonymizeText(p.content)}
+                  {p.content}
                 </div>
 
                 <div className="mt-3 text-xs text-zinc-500">
-				작성자: 익명
+                  작성자: 익명
                 </div>
               </Link>
             ))}
