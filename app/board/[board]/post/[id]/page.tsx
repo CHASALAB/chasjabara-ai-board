@@ -1,272 +1,239 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
-import Link from 'next/link'
 import { useParams } from 'next/navigation'
-import { supabase } from '@/lib/supabaseClient'
+import Link from 'next/link'
 import ReportButton from '@/app/components/ReportButton'
+import { useEffect, useMemo, useState } from 'react'
+import { supabase } from '@/lib/supabase'
+import ReportButton from '@/app/components/ReportButton'
+import { anonymizeText } from '@/lib/anonymize'
+
+
 
 type PostRow = {
   id: string
-  board: string | null
-  title: string | null
-  content: string | null
-  author: string | null
-  hidden?: boolean | null
-  report_count?: number | null
-  created_at?: string | null
-  createdAt?: number | null
+  board: string
+  title: string
+  content: string
+  author_anon_id: string
+  created_at: string
+  report_count: number | null
+  hidden?: boolean
 }
 
 type CommentRow = {
   id: string
   post_id: string
-  content: string | null
-  author: string | null
-  hidden?: boolean | null
-  report_count?: number | null
-  created_at?: string | null
-  createdAt?: number | null
+  content: string
+  author_anon_id: string
+  created_at: string
+  report_count: number | null
 }
 
 function safeDecode(v: string) {
-  try {
-    return decodeURIComponent(v)
-  } catch {
-    return v
-  }
-}
-
-function formatDate(p: { created_at?: string | null; createdAt?: number | null }) {
-  if (p.created_at) return new Date(p.created_at).toLocaleString()
-  if (typeof p.createdAt === 'number') return new Date(p.createdAt).toLocaleString()
-  return ''
+  try { return decodeURIComponent(v) } catch { return v }
 }
 
 function getAnonId() {
-  if (typeof window === 'undefined') return 'anon'
   const key = 'chasjabara_anon_id'
-  const existing = localStorage.getItem(key)
-  if (existing) return existing
-  const id = `anon_${Math.random().toString(36).slice(2, 8)}`
-  localStorage.setItem(key, id)
-  return id
+  let v = localStorage.getItem(key)
+  if (!v) {
+    v = `anon_${crypto.randomUUID().slice(0, 8)}`
+    localStorage.setItem(key, v)
+  }
+  return v
 }
 
-export default function PostDetailPage() {
+export default function PostPage() {
   const params = useParams()
-
   const rawBoard = (params?.board ?? '') as string
-  const rawId = (params?.id ?? '') as string
-
   const board = useMemo(() => safeDecode(rawBoard), [rawBoard])
   const boardSlug = useMemo(() => encodeURIComponent(board), [board])
-  const id = useMemo(() => safeDecode(rawId), [rawId])
 
-  const [loading, setLoading] = useState(true)
+  const id = (params?.id ?? '') as string
+  const anonId = useMemo(() => getAnonId(), [])
+
   const [post, setPost] = useState<PostRow | null>(null)
   const [comments, setComments] = useState<CommentRow[]>([])
+  const [loading, setLoading] = useState(true)
+
+  const [content, setContent] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [sending, setSending] = useState(false)
+  const [toast, setToast] = useState<string | null>(null)
 
-  // 댓글 작성
-  const [commentText, setCommentText] = useState('')
-  const [saving, setSaving] = useState(false)
-
-  async function load() {
+  const loadAll = async () => {
     setLoading(true)
-    setError(null)
-    try {
-      // ✅ 숨김 글은 아예 안 가져오게(hidden=false)
-      const { data: postData, error: postErr } = await supabase
-        .from('posts')
-        .select('id, board, title, content, author, hidden, report_count, created_at, createdAt')
-        .eq('id', id)
-        .eq('hidden', false)
-        .single()
 
-      if (postErr) {
-        // 숨김이거나 없는 글이면 single에서 에러가 날 수 있음
-        setPost(null)
-        setComments([])
-        return
-      }
+    const { data: p } = await supabase
+      .from('posts')
+      .select('*')
+      .eq('id', id)
+      .eq('hidden', false)
+      .maybeSingle()
 
-      setPost(postData as PostRow)
+    if ((p as any)?.hidden) setPost(null)
+    else setPost((p as any) ?? null)
 
-      // ✅ 숨김 댓글도 안 보이게(hidden=false)
-      const { data: commentData, error: cErr } = await supabase
-        .from('comments')
-        .select('id, post_id, content, author, hidden, report_count, created_at, createdAt')
-        .eq('post_id', id)
-        .eq('hidden', false)
-        .order('created_at', { ascending: true })
+    const { data: cs } = await supabase
+      .from('comments')
+      .select('*')
+      .eq('post_id', id)
+      .eq('hidden', false)
+      .order('created_at', { ascending: false })
 
-      if (cErr) throw cErr
-      setComments((commentData ?? []) as CommentRow[])
-    } catch (e: any) {
-      setError(e?.message ?? '불러오기 실패')
-    } finally {
-      setLoading(false)
-    }
+    setComments((cs ?? []) as CommentRow[])
+    setLoading(false)
   }
 
   useEffect(() => {
-    load()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (id) loadAll()
   }, [id])
 
-  async function submitComment() {
-    const text = commentText.trim()
-    if (!text) return alert('댓글 내용을 입력해주세요.')
-    if (!post) return
+  const reportPost = async () => {
+    setToast(null)
+    const { error } = await supabase.from('post_reports').insert({
+      post_id: id,
+      reporter_anon_id: anonId,
+    })
+    if (error) return setToast('이미 신고했거나, 잠시 후 다시 시도해줘.')
+    setToast('게시글 신고 접수됨. (누적 3회면 자동 숨김)')
+    loadAll()
+  }
 
-    setSaving(true)
-    try {
-      const author = getAnonId()
-      const { error } = await supabase.from('comments').insert([
-        {
-          post_id: post.id,
-          content: text,
-          author,
-          board: board, // comments 테이블에 board 컬럼이 없으면 Supabase가 무시하진 않고 에러낼 수 있음
-        } as any,
-      ])
+  const reportComment = async (commentId: string) => {
+    setToast(null)
+    const { error } = await supabase.from('comment_reports').insert({
+      comment_id: commentId,
+      reporter_anon_id: anonId,
+    })
+    if (error) return setToast('이미 신고했거나, 잠시 후 다시 시도해줘.')
+    setToast('댓글 신고 접수됨. (누적 3회면 자동 숨김)')
+    loadAll()
+  }
 
-      if (error) {
-        // comments 테이블에 board 컬럼이 없을 수 있어서 한 번 더 안전 처리
-        const { error: error2 } = await supabase.from('comments').insert([
-          {
-            post_id: post.id,
-            content: text,
-            author,
-          } as any,
-        ])
-        if (error2) throw error2
-      }
+  const submitComment = async () => {
+    setError(null)
+    if (!content.trim()) return setError('댓글 내용을 입력해줘.')
+    setSending(true)
 
-      setCommentText('')
-      await load()
-    } catch (e: any) {
-      alert('댓글 등록 실패: ' + (e?.message ?? 'error'))
-    } finally {
-      setSaving(false)
+    const { error } = await supabase.from('comments').insert({
+      post_id: id,
+      content: content.trim(),
+      author_anon_id: anonId,
+    })
+
+    setSending(false)
+
+    if (error) {
+      setError(`[Supabase] ${error.message}`)
+      return
     }
+
+    setContent('')
+    loadAll()
   }
 
   return (
     <main className="min-h-screen bg-zinc-950 text-white px-5 py-10">
       <div className="max-w-3xl mx-auto space-y-6">
         <header className="space-y-2">
-          <div className="flex items-center justify-between gap-3">
-            <Link
-              href={`/board/${boardSlug}`}
-              className="text-sm text-zinc-400 hover:text-zinc-200"
-            >
-              ← {board} 게시판
-            </Link>
-
-            {/* ✅ 게시글 신고 버튼 (1~5 중 핵심) */}
-            {post ? (
-              <ReportButton type="post" targetId={post.id} board={board} />
-            ) : null}
-          </div>
+          <h1 className="text-2xl font-bold">{board} 게시판</h1>
+          <p className="text-xs text-zinc-400">
+            ※ 실명/비방 금지 · 신고 3회 누적 시 자동 숨김
+          </p>
+          {toast && <div className="text-sm text-emerald-300">{toast}</div>}
         </header>
 
         {loading ? (
-          <section className="bg-zinc-900 rounded-xl p-4 text-zinc-300">
-            불러오는 중...
-          </section>
-        ) : error ? (
-          <section className="bg-zinc-900 rounded-xl p-4 text-red-300">
-            에러: {error}
-          </section>
+          <div className="text-zinc-400">불러오는 중…</div>
         ) : !post ? (
-          <section className="bg-zinc-900 rounded-xl p-6 text-zinc-300 space-y-2">
-            <div className="text-lg font-semibold">이 글은 볼 수 없습니다.</div>
-            <div className="text-sm text-zinc-400">
-              숨김 처리되었거나 삭제된 글일 수 있어요.
-            </div>
+          <section className="bg-zinc-900 rounded-xl p-4 text-zinc-300">
+            게시글을 찾을 수 없거나 숨김 처리되었습니다.
           </section>
         ) : (
-          <>
-            {/* 게시글 본문 */}
-            <section className="bg-zinc-900 rounded-xl p-5 space-y-3">
-              <div className="space-y-1">
-                <h1 className="text-2xl font-bold">{post.title ?? '(제목 없음)'}</h1>
-                <div className="text-xs text-zinc-400">
-                  {formatDate(post)} · 작성자: {post.author ?? '익명'}
-                </div>
-              </div>
+          <section className="bg-zinc-900 rounded-xl p-4 space-y-2">
+            <div className="flex justify-between items-start gap-3">
+              <div className="text-xl font-semibold">{post.title}</div>
+              <button
+                type="button"
+                onClick={reportPost}
+                className="text-xs px-3 py-1 rounded bg-zinc-800 hover:bg-zinc-700"
+              >
+                신고 ({post.report_count ?? 0})
+              </button>
+            </div>
 
-              <div className="whitespace-pre-line text-zinc-200">
-                {post.content ?? ''}
-              </div>
+            <div className="text-xs text-zinc-400">
+              {new Date(post.created_at).toLocaleString()} · {post.author_anon_id}
+            </div>
 
-              <div className="text-xs text-zinc-500">
-                신고 누적이 3회 이상이면 자동 숨김 처리됩니다.
-              </div>
-            </section>
-
-            {/* 댓글 */}
-            <section className="space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="font-semibold">댓글 ({comments.length})</div>
-              </div>
-
-              {/* 댓글 작성 */}
-              <div className="bg-zinc-900 rounded-xl p-4 space-y-2">
-                <textarea
-                  value={commentText}
-                  onChange={(e) => setCommentText(e.target.value)}
-                  placeholder="익명 댓글을 입력하세요"
-                  className="w-full min-h-[90px] rounded-lg bg-zinc-950 border border-zinc-800 px-3 py-2 text-sm outline-none"
-                />
-                <div className="flex justify-end">
-                  <button
-                    onClick={submitComment}
-                    disabled={saving}
-                    className="rounded-lg px-4 py-2 bg-red-600 hover:bg-red-700 text-sm disabled:opacity-60"
-                  >
-                    {saving ? '등록 중...' : '등록'}
-                  </button>
-                </div>
-              </div>
-
-              {/* 댓글 목록 */}
-              {comments.length === 0 ? (
-                <div className="bg-zinc-900 rounded-xl p-4 text-zinc-400 text-sm">
-                  아직 댓글이 없습니다.
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {comments.map((c) => (
-                    <div key={c.id} className="bg-zinc-900 rounded-xl p-4">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="text-xs text-zinc-400">
-                          {formatDate(c)} · {c.author ?? '익명'}
-                        </div>
-
-                        {/* ✅ 댓글 신고 버튼 (compact) */}
-                        <ReportButton
-                          type="comment"
-                          targetId={c.id}
-                          board={board}
-                          compact
-                        />
-                      </div>
-
-                      <div className="mt-2 whitespace-pre-line text-zinc-200">
-                        {c.content ?? ''}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </section>
-          </>
+            <div className="whitespace-pre-line text-zinc-200 mt-3">{anonymizeText(post.content)}
+</div>
+          </section>
         )}
+
+        <section className="bg-zinc-900 rounded-xl p-4 space-y-3">
+          <div className="flex items-baseline justify-between">
+            <h2 className="text-lg font-semibold">댓글</h2>
+            <div className="text-xs text-zinc-500">익명 ID: {anonId}</div>
+          </div>
+
+          <textarea
+            className="w-full rounded-lg px-3 py-2 text-black min-h-[90px]"
+            placeholder="댓글을 입력하세요"
+            value={content}
+            onChange={(e) => setContent(e.target.value)}
+          />
+
+          {error && <div className="text-sm text-red-300">{error}</div>}
+
+          <button
+            type="button"
+            disabled={sending}
+            onClick={submitComment}
+            className="rounded-lg px-4 py-2 bg-red-600 hover:bg-red-700 text-sm disabled:opacity-60"
+          >
+            {sending ? '등록 중…' : '댓글 등록'}
+          </button>
+
+          {comments.length === 0 ? (
+            <div className="text-sm text-zinc-300">아직 댓글이 없습니다.</div>
+          ) : (
+            <div className="space-y-2">
+              {comments.map((c) => (
+                <div key={c.id} className="bg-zinc-950 rounded-lg p-3">
+                  <div className="flex justify-between items-center text-xs text-zinc-400">
+                    <span>{c.author_anon_id}</span>
+                    <div className="flex items-center gap-2">
+                      <span>{new Date(c.created_at).toLocaleString()}</span>
+                      <button
+                        type="button"
+                        onClick={() => reportComment(c.id)}
+                        className="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700"
+                        title="신고 3회 누적 시 자동 숨김"
+                      >
+                        신고 ({c.report_count ?? 0})
+                      </button>
+                    </div>
+                  </div>
+                  <div className="mt-2 whitespace-pre-line text-zinc-200">{anonymizeText(c.content)}
+</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <div className="flex gap-3 text-sm">
+          <a href={`/board/${boardSlug}`} className="text-zinc-400 hover:text-zinc-200">
+            ← 목록으로
+          </a>
+          <Link href="/" className="text-zinc-400 hover:text-zinc-200">
+            메인
+          </Link>
+        </div>
       </div>
     </main>
   )
 }
-

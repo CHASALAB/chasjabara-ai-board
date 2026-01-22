@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
+import { anonymizeText } from '@/lib/anonymize'
 
 type PostRow = {
   id: string
@@ -122,7 +123,7 @@ export default function BoardPage() {
                 </div>
 
                 <div className="mt-2 text-zinc-200 line-clamp-2 whitespace-pre-line">
-                  {p.content}
+                  {{anonymizeText(p.content)}
                 </div>
 
                 <div className="mt-3 text-xs text-zinc-500">
