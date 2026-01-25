@@ -339,7 +339,8 @@ export default function AnalyzePage() {
               </div>
 
               <div className="bg-zinc-900 rounded-xl p-4 text-xs text-zinc-500">
-                ※ 다음 고급화: “유저 프로필(/u/닉네임)”, “최근 7일/30일 필터”, “가중치(글>댓글)”, “트렌드 그래프” 가능
+                ※ 다음 고급화: "유저 프로필(/u/닉네임)", "최근 7일/30일 필터", "가중치(글&gt;댓글)", "트렌드 그래프" 가능
+
               </div>
             </div>
           ) : null}
