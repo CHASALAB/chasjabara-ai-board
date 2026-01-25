@@ -1,9 +1,3 @@
-export type BoardInfo = {
-  slug: string
-  title: string
-  db: string
-}
-
 function safeDecode(v: string) {
   try {
     return decodeURIComponent(v)
@@ -12,12 +6,14 @@ function safeDecode(v: string) {
   }
 }
 
-export function resolveBoard(rawParam: string): BoardInfo {
-  const raw = /%[0-9A-Fa-f]{2}/.test(rawParam) ? safeDecode(rawParam) : rawParam
+export type BoardInfo = {
+  name: string
+  slug: string
+}
 
-  if (raw === 'who' || raw === '이 사람 어때?' || raw === '이사람어때') {
-    return { slug: 'who', title: '이 사람 어때?', db: '이 사람 어때?' }
-  }
-
-  return { slug: raw, title: raw, db: raw }
+export function resolveBoard(raw: string): BoardInfo {
+  const decoded = safeDecode(raw ?? '')
+  const name = decoded.trim() || '게시판'
+  const slug = encodeURIComponent(name)
+  return { name, slug }
 }

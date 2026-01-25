@@ -20,8 +20,10 @@ export default function BoardPage() {
   const params = useParams()
   const rawBoard = (params?.board ?? '') as string
 
-  const info = useMemo(() => resolveBoard(rawBoard), [rawBoard])
-  const boardSlug = useMemo(() => encodeURIComponent(info.slug), [info.slug])
+const info = useMemo(() => resolveBoard(rawBoard), [rawBoard])
+const boardName = info.name
+const boardSlug = info.slug
+
 
   const [posts, setPosts] = useState<PostRow[]>([])
   const [loading, setLoading] = useState(true)
