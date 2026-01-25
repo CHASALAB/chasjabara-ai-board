@@ -32,8 +32,7 @@ type HiddenComment = {
 type LoadState = 'idle' | 'loading' | 'done' | 'error'
 
 export default function AdminModerationPage() {
-  // ✅ getSupabaseBrowser()는 env 없으면 throw 하게 되어있으니
-  //    여기서는 null 타입으로 만들지 말고 “항상 있는 값”으로 다룹니다.
+  // ✅ 이제 getSupabaseBrowser()는 절대 null을 리턴하지 않음(없으면 throw)
   const supabase = useMemo(() => getSupabaseBrowser(), [])
 
   const [state, setState] = useState<LoadState>('idle')
@@ -52,7 +51,6 @@ export default function AdminModerationPage() {
       setHiddenComments([])
 
       try {
-        // 1) 숨김 게시글
         const postsRes = await supabase
           .from('posts')
           .select('id,board,title,content,created_at,is_hidden,hidden_reason,hidden_at')
@@ -62,7 +60,6 @@ export default function AdminModerationPage() {
 
         if (postsRes.error) throw postsRes.error
 
-        // 2) 숨김 댓글
         const commentsRes = await supabase
           .from('comments')
           .select('id,post_id,content,created_at,is_hidden,hidden_reason,hidden_at')
@@ -128,12 +125,12 @@ export default function AdminModerationPage() {
                         <div className="font-medium">
                           [{p.board}] {p.title}
                         </div>
-                        <div className="text-xs text-zinc-500">{new Date(p.hidden_at ?? p.created_at).toLocaleString()}</div>
+                        <div className="text-xs text-zinc-500">
+                          {new Date(p.hidden_at ?? p.created_at).toLocaleString()}
+                        </div>
                       </div>
                       <div className="text-sm text-zinc-300 whitespace-pre-line">{p.content}</div>
-                      <div className="text-xs text-zinc-500">
-                        사유: {p.hidden_reason ?? '(없음)'}
-                      </div>
+                      <div className="text-xs text-zinc-500">사유: {p.hidden_reason ?? '(없음)'}</div>
                     </li>
                   ))}
                 </ul>
@@ -150,12 +147,12 @@ export default function AdminModerationPage() {
                     <li key={c.id} className="rounded-lg bg-zinc-950/40 px-3 py-3 space-y-1">
                       <div className="flex items-center justify-between">
                         <div className="text-sm text-zinc-200">post_id: {c.post_id}</div>
-                        <div className="text-xs text-zinc-500">{new Date(c.hidden_at ?? c.created_at).toLocaleString()}</div>
+                        <div className="text-xs text-zinc-500">
+                          {new Date(c.hidden_at ?? c.created_at).toLocaleString()}
+                        </div>
                       </div>
                       <div className="text-sm text-zinc-300 whitespace-pre-line">{c.content}</div>
-                      <div className="text-xs text-zinc-500">
-                        사유: {c.hidden_reason ?? '(없음)'}
-                      </div>
+                      <div className="text-xs text-zinc-500">사유: {c.hidden_reason ?? '(없음)'}</div>
                     </li>
                   ))}
                 </ul>
