@@ -1,89 +1,78 @@
 'use client'
 
-import Link from 'next/link'
 import { useParams } from 'next/navigation'
+import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
-import { supabase } from '@/lib/supabase'
+import { getSupabaseBrowser } from '@/lib/supabase'
+import { resolveBoard } from '@/lib/boards'
 
 type PostRow = {
   id: string
   board: string
   title: string
   content: string
-  author: string | null
+  author_anon_id: string
   created_at: string
-  hidden?: boolean | null
-}
-
-function safeDecode(v: string) {
-  try {
-    return decodeURIComponent(v)
-  } catch {
-    return v
-  }
+  is_hidden?: boolean
 }
 
 export default function BoardPage() {
   const params = useParams()
+  const rawBoard = (params?.board ?? '') as string
 
-  // ✅ params 안전 처리 (string | string[] | undefined)
-  const rawBoardAny = (params as any)?.board
-  const rawBoard = useMemo(() => {
-    if (Array.isArray(rawBoardAny)) return rawBoardAny[0] ?? ''
-    return typeof rawBoardAny === 'string' ? rawBoardAny : ''
-  }, [rawBoardAny])
-
-  const board = useMemo(() => safeDecode(rawBoard).trim(), [rawBoard])
-  const boardSlug = useMemo(() => encodeURIComponent(board), [board])
+  const info = useMemo(() => resolveBoard(rawBoard), [rawBoard])
+  const boardSlug = useMemo(() => encodeURIComponent(info.slug), [info.slug])
 
   const [posts, setPosts] = useState<PostRow[]>([])
   const [loading, setLoading] = useState(true)
-  const [errorMsg, setErrorMsg] = useState('')
+  const [err, setErr] = useState<string | null>(null)
 
   useEffect(() => {
     let mounted = true
 
-    async function load() {
+    ;(async () => {
       setLoading(true)
-      setErrorMsg('')
+      setErr(null)
+
+      const supabase = getSupabaseBrowser()
+      if (!supabase) {
+        if (!mounted) return
+        setErr('Supabase 환경변수를 읽지 못했습니다. (.env.local / 재시작 확인)')
+        setPosts([])
+        setLoading(false)
+        return
+      }
 
       const { data, error } = await supabase
         .from('posts')
-        .select('id, board, title, content, author, created_at, hidden')
-        .eq('board', board)
-        .eq('hidden', false)
+        .select('id, board, title, content, author_anon_id, created_at, is_hidden')
+        .eq('board', info.db)
         .order('created_at', { ascending: false })
 
       if (!mounted) return
 
       if (error) {
-        setErrorMsg(error.message ?? '게시글을 불러오지 못했습니다.')
+        console.error('posts load error:', error)
+        setErr(`불러오기 실패: ${error.message}`)
         setPosts([])
       } else {
-        setPosts((data ?? []) as PostRow[])
+        setPosts((data ?? []).filter((p) => !p.is_hidden))
       }
 
       setLoading(false)
-    }
+    })()
 
-    if (!board) {
-      setPosts([])
-      setLoading(false)
-      return
-    }
-
-    load()
     return () => {
       mounted = false
     }
-  }, [board])
+  }, [info.db])
 
   return (
     <main className="min-h-screen bg-zinc-950 text-white px-5 py-10">
       <div className="max-w-3xl mx-auto space-y-6">
         <header className="space-y-2">
           <div className="flex items-center justify-between gap-3">
-            <h1 className="text-2xl font-bold">{board} 게시판</h1>
+            <h1 className="text-2xl font-bold">{info.title} 게시판</h1>
 
             <Link
               href={`/board/${boardSlug}/write`}
@@ -93,18 +82,14 @@ export default function BoardPage() {
             </Link>
           </div>
 
-          <p className="text-zinc-400 text-sm">
-            이 게시판은 익명 기반으로 운영됩니다.
-          </p>
+          <p className="text-zinc-400 text-sm">이 게시판은 익명 기반으로 운영됩니다.</p>
         </header>
 
         {loading ? (
-          <section className="bg-zinc-900 rounded-xl p-4 text-zinc-300">
-            불러오는 중...
-          </section>
-        ) : errorMsg ? (
-          <section className="bg-zinc-900 rounded-xl p-4 text-red-300">
-            에러: {errorMsg}
+          <section className="bg-zinc-900 rounded-xl p-4 text-zinc-300">불러오는 중...</section>
+        ) : err ? (
+          <section className="bg-zinc-900 rounded-xl p-4 text-zinc-300 whitespace-pre-line">
+            {err}
           </section>
         ) : posts.length === 0 ? (
           <section className="bg-zinc-900 rounded-xl p-4 text-zinc-300">
@@ -125,13 +110,8 @@ export default function BoardPage() {
                     {new Date(p.created_at).toLocaleString()}
                   </div>
                 </div>
-
-                <div className="mt-2 text-zinc-200 line-clamp-2 whitespace-pre-line">
+                <div className="mt-2 line-clamp-2 whitespace-pre-line text-zinc-200">
                   {p.content}
-                </div>
-
-                <div className="mt-3 text-xs text-zinc-500">
-                  작성자: 익명
                 </div>
               </Link>
             ))}

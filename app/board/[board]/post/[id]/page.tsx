@@ -1,309 +1,224 @@
 'use client'
 
 import Link from 'next/link'
-import { useParams } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import { useEffect, useMemo, useState } from 'react'
-import { supabase } from '@/lib/supabase'
-import { getAnonId } from '@/lib/anon'
+import { getSupabaseBrowser } from '@/lib/supabase'
 
 type PostRow = {
   id: string
-  board: string
-  title: string
-  content: string
-  created_at: string
-  hidden?: boolean | null
+  board: string | null
+  title: string | null
+  content: string | null
+  created_at: string | null
+  is_hidden?: boolean | null
 }
 
 type CommentRow = {
   id: string
   post_id: string
-  content: string
-  created_at: string
-  hidden?: boolean | null
+  content: string | null
+  created_at: string | null
+  is_hidden?: boolean | null
   author_anon_id?: string | null
-}
-
-function safeDecode(v: string) {
-  try {
-    return decodeURIComponent(v)
-  } catch {
-    return v
-  }
 }
 
 export default function PostDetailPage() {
   const params = useParams()
+  const router = useRouter()
 
-  const rawBoardAny = (params as any)?.board
-  const rawBoard = useMemo(() => {
-    if (Array.isArray(rawBoardAny)) return rawBoardAny[0] ?? ''
-    return typeof rawBoardAny === 'string' ? rawBoardAny : ''
-  }, [rawBoardAny])
+  const board = decodeURIComponent(String(params.board ?? ''))
+  const id = String(params.id ?? '')
 
-  const board = useMemo(() => safeDecode(rawBoard).trim(), [rawBoard])
-  const boardSlug = useMemo(() => encodeURIComponent(board), [board])
-
-  const rawIdAny = (params as any)?.id
-  const id = useMemo(() => {
-    if (Array.isArray(rawIdAny)) return rawIdAny[0] ?? ''
-    return typeof rawIdAny === 'string' ? rawIdAny : ''
-  }, [rawIdAny])
+  const supabase = useMemo(() => getSupabaseBrowser(), [])
 
   const [loading, setLoading] = useState(true)
-  const [errorMsg, setErrorMsg] = useState('')
   const [post, setPost] = useState<PostRow | null>(null)
-
   const [comments, setComments] = useState<CommentRow[]>([])
-  const [cLoading, setCLoading] = useState(false)
-  const [cError, setCError] = useState('')
+  const [err, setErr] = useState('')
 
-  const [newComment, setNewComment] = useState('')
+  const [commentText, setCommentText] = useState('')
   const [submitting, setSubmitting] = useState(false)
-  const [submitError, setSubmitError] = useState('')
 
-  const [toast, setToast] = useState<string>('')
-
-  function showToast(msg: string) {
-    setToast(msg)
-    window.setTimeout(() => setToast(''), 1800)
-  }
-
-  async function loadPost(postId: string) {
-    const { data, error } = await supabase
-      .from('posts')
-      .select('id, board, title, content, created_at, hidden')
-      .eq('id', postId)
-      .maybeSingle()
-
-    if (error) throw error
-    if (!data) return null
-
-    const row = data as PostRow
-    if (row.hidden === true) return null
-    return row
-  }
-
-  async function loadComments(postId: string) {
-    setCLoading(true)
-    setCError('')
-
-    const { data, error } = await supabase
-      .from('comments')
-      .select('id, post_id, content, created_at, hidden, author_anon_id')
-      .eq('post_id', postId)
-      .eq('hidden', false)
-      .order('created_at', { ascending: true })
-
-    if (error) {
-      setCError(error.message ?? '댓글을 불러오지 못했습니다.')
-      setComments([])
-    } else {
-      setComments((data ?? []) as CommentRow[])
-    }
-
-    setCLoading(false)
-  }
-
+  // ✅ 안전한 select: 존재할 수도/없을 수도 있는 컬럼은 빼고 “기본 컬럼만”
+  // (스키마가 달라도 500이 안 나게)
   useEffect(() => {
     let mounted = true
 
-    async function run() {
+    async function load() {
       setLoading(true)
-      setErrorMsg('')
+      setErr('')
       setPost(null)
       setComments([])
 
       try {
-        if (!id) {
-          setErrorMsg('게시글 id가 없습니다.')
-          return
-        }
+        // 1) 게시글 로드 (기본 컬럼만)
+        const { data: postData, error: postErr } = await supabase
+          .from('posts')
+          .select('id, board, title, content, created_at')
+          .eq('id', id)
+          .maybeSingle()
 
-        const p = await loadPost(id)
+        if (postErr) throw postErr
         if (!mounted) return
 
-        if (!p) {
-          setErrorMsg('게시글을 찾을 수 없거나 숨김 처리되었습니다.')
+        if (!postData) {
+          setErr('게시글을 찾을 수 없어요. (삭제되었거나 숨김 처리되었을 수 있어요)')
+          setLoading(false)
           return
         }
 
-        setPost(p)
-        await loadComments(id)
+        setPost(postData as PostRow)
+
+        // 2) 댓글 로드 (기본 컬럼만)
+        const { data: cData, error: cErr } = await supabase
+          .from('comments')
+          .select('id, post_id, content, created_at')
+          .eq('post_id', id)
+          .order('created_at', { ascending: true })
+
+        // comments 테이블이 아직 없거나 권한 문제면, 댓글 없이라도 페이지는 뜨게
+        if (!cErr) setComments((cData ?? []) as CommentRow[])
+        setLoading(false)
       } catch (e: any) {
         if (!mounted) return
-        setErrorMsg(e?.message ?? '게시글을 불러오지 못했습니다.')
-      } finally {
-        if (mounted) setLoading(false)
+        setErr(e?.message ?? '알 수 없는 오류가 발생했어요')
+        setLoading(false)
       }
     }
 
-    run()
+    if (!id) {
+      setErr('잘못된 접근이에요.')
+      setLoading(false)
+      return
+    }
+
+    load()
     return () => {
       mounted = false
     }
-  }, [id])
+  }, [supabase, id])
 
-  async function submitComment() {
-    const content = newComment.trim()
-    if (!id) return
-    if (!content) {
-      setSubmitError('댓글 내용을 입력해주세요.')
-      return
-    }
+  async function onSubmitComment() {
+    const content = commentText.trim()
+    if (!content) return
 
     setSubmitting(true)
-    setSubmitError('')
+    setErr('')
 
-    const anonId = getAnonId()
-
-    const { error } = await supabase.from('comments').insert({
-      post_id: id,
-      content,
-      author_anon_id: anonId,
-    })
-
-    if (error) {
-      setSubmitError(error.message ?? '댓글 등록 실패')
-      setSubmitting(false)
-      return
-    }
-
-    setNewComment('')
-    setSubmitting(false)
-    await loadComments(id)
-    showToast('댓글이 등록되었습니다')
-  }
-
-  async function reportComment(commentId: string) {
-    if (!id) return
-    const reporter = getAnonId()
-
-    const { error } = await supabase.from('comment_reports').insert({
-      comment_id: commentId,
-      reporter_anon_id: reporter,
-      reason: null,
-    })
-
-    if (error) {
-      // 중복 신고 unique constraint
-      if ((error as any)?.code === '23505') {
-        showToast('이미 신고한 댓글입니다')
-        return
+    try {
+      // ✅ author_anon_id가 NOT NULL이면, 로컬에 없을 때 생성해서 넣기
+      const key = 'chasjabara_anon_id'
+      let anon = localStorage.getItem(key)
+      if (!anon) {
+        anon = crypto.randomUUID()
+        localStorage.setItem(key, anon)
       }
-      showToast(error.message ?? '신고 실패')
-      return
-    }
 
-    showToast('신고 접수 완료')
-    await loadComments(id) // 3회 이상이면 hidden 처리되어 자동으로 사라짐
+      const { error } = await supabase.from('comments').insert({
+        post_id: id,
+        content,
+        author_anon_id: anon,
+      })
+
+      if (error) throw error
+
+      setCommentText('')
+
+      // 다시 로드(간단)
+      const { data: cData } = await supabase
+        .from('comments')
+        .select('id, post_id, content, created_at')
+        .eq('post_id', id)
+        .order('created_at', { ascending: true })
+
+      setComments((cData ?? []) as CommentRow[])
+    } catch (e: any) {
+      setErr(e?.message ?? '댓글 등록에 실패했어요')
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   return (
     <main className="min-h-screen bg-zinc-950 text-white px-5 py-10">
       <div className="max-w-3xl mx-auto space-y-6">
-        {toast && (
-          <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-zinc-900 border border-zinc-700 px-4 py-2 rounded-full text-sm text-zinc-100 shadow">
-            {toast}
+        <div className="flex items-center justify-between">
+          <Link href={`/board/${encodeURIComponent(board)}`} className="text-sm text-zinc-300 hover:text-white">
+            ← {board} 게시판
+          </Link>
+          <button
+            onClick={() => router.refresh()}
+            className="text-xs px-3 py-2 rounded-lg border border-zinc-800 bg-zinc-900 hover:bg-zinc-800"
+          >
+            새로고침
+          </button>
+        </div>
+
+        {loading && (
+          <div className="bg-zinc-900 rounded-xl p-4 text-zinc-300">
+            불러오는 중…
           </div>
         )}
 
-        <header className="space-y-2">
-          <div className="flex items-center justify-between gap-3">
-            <h1 className="text-xl font-bold">게시글 보기</h1>
-
-            <Link
-              href={`/board/${boardSlug}`}
-              className="text-sm text-zinc-400 hover:text-zinc-200"
-            >
-              ← {board} 게시판
-            </Link>
+        {!loading && err && (
+          <div className="bg-zinc-900 rounded-xl p-4 text-zinc-300 space-y-2">
+            <div className="font-semibold">오류</div>
+            <div className="text-zinc-400 text-sm whitespace-pre-line">{err}</div>
           </div>
-        </header>
+        )}
 
-        {loading ? (
-          <section className="bg-zinc-900 rounded-xl p-4 text-zinc-300">불러오는 중...</section>
-        ) : errorMsg ? (
-          <section className="bg-zinc-900 rounded-xl p-4 text-red-300">에러: {errorMsg}</section>
-        ) : !post ? (
-          <section className="bg-zinc-900 rounded-xl p-4 text-zinc-300">게시글이 없습니다.</section>
-        ) : (
+        {!loading && !err && post && (
           <>
             <article className="bg-zinc-900 rounded-xl p-5 space-y-3">
-              <div className="text-xs text-zinc-400">
-                {new Date(post.created_at).toLocaleString()}
+              <h1 className="text-xl font-bold">{post.title ?? '(제목 없음)'}</h1>
+              <div className="text-xs text-zinc-500">
+                {post.created_at ? new Date(post.created_at).toLocaleString() : ''}
               </div>
-              <h2 className="text-2xl font-bold">{post.title}</h2>
-              <div className="whitespace-pre-line text-zinc-200">{post.content}</div>
-              <div className="text-xs text-zinc-500">작성자: 익명</div>
+              <div className="whitespace-pre-line text-zinc-200">
+                {post.content ?? ''}
+              </div>
             </article>
 
             <section className="bg-zinc-900 rounded-xl p-5 space-y-3">
-              <div className="font-semibold">댓글 작성</div>
+              <div className="font-semibold">댓글</div>
 
-              <textarea
-                value={newComment}
-                onChange={(e) => setNewComment(e.target.value)}
-                placeholder="댓글을 입력하세요 (익명)"
-                className="w-full min-h-[90px] rounded-xl bg-zinc-950 border border-zinc-800 px-3 py-2 text-sm outline-none focus:border-zinc-600"
-              />
-
-              {submitError && <div className="text-sm text-red-300">에러: {submitError}</div>}
-
-              <div className="flex justify-end">
+              <div className="flex flex-col gap-2">
+                <textarea
+                  value={commentText}
+                  onChange={(e) => setCommentText(e.target.value)}
+                  rows={3}
+                  placeholder="댓글을 입력하세요 (익명)"
+                  className="w-full rounded-lg bg-zinc-950/40 border border-zinc-800 px-3 py-2 text-sm outline-none"
+                />
                 <button
-                  onClick={submitComment}
+                  onClick={onSubmitComment}
                   disabled={submitting}
-                  className="rounded-lg px-4 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-60 text-sm"
+                  className="rounded-lg px-4 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-sm"
                 >
-                  {submitting ? '등록 중...' : '댓글 등록'}
+                  {submitting ? '등록 중…' : '댓글 등록'}
                 </button>
               </div>
-            </section>
 
-            <section className="bg-zinc-900 rounded-xl p-5 space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="font-semibold">댓글</div>
-                <div className="text-xs text-zinc-500">{comments.length}개</div>
-              </div>
-
-              {cLoading ? (
-                <div className="text-sm text-zinc-300">댓글 불러오는 중...</div>
-              ) : cError ? (
-                <div className="text-sm text-red-300">에러: {cError}</div>
-              ) : comments.length === 0 ? (
-                <div className="text-sm text-zinc-400">아직 댓글이 없습니다.</div>
+              {comments.length === 0 ? (
+                <div className="text-zinc-400 text-sm">아직 댓글이 없습니다.</div>
               ) : (
-                <div className="space-y-3">
+                <ul className="space-y-2">
                   {comments.map((c) => (
-                    <div key={c.id} className="bg-zinc-950 border border-zinc-800 rounded-xl p-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="text-xs text-zinc-500">
-                          익명 · {new Date(c.created_at).toLocaleString()}
-                        </div>
-                        <button
-                          onClick={() => reportComment(c.id)}
-                          className="text-xs px-3 py-1 rounded-full bg-zinc-800 hover:bg-zinc-700"
-                          title="신고가 누적되면 자동 숨김 처리됩니다"
-                        >
-                          신고
-                        </button>
+                    <li key={c.id} className="rounded-lg bg-zinc-950/40 px-3 py-2">
+                      <div className="text-xs text-zinc-500">
+                        {c.created_at ? new Date(c.created_at).toLocaleString() : ''}
                       </div>
-
-                      <div className="mt-2 whitespace-pre-line text-zinc-200">{c.content}</div>
-                    </div>
+                      <div className="mt-1 whitespace-pre-line text-zinc-200">
+                        {c.content ?? ''}
+                      </div>
+                    </li>
                   ))}
-                </div>
+                </ul>
               )}
             </section>
           </>
         )}
-
-        <div className="flex gap-3">
-          <Link href="/" className="text-sm text-zinc-400 hover:text-zinc-200">메인</Link>
-          <Link href="/trend" className="text-sm text-zinc-400 hover:text-zinc-200">트렌드</Link>
-          <Link href="/rules" className="text-sm text-zinc-400 hover:text-zinc-200">운영규칙</Link>
-        </div>
       </div>
     </main>
   )

@@ -1,0 +1,26 @@
+export type BoardInfo = {
+  slug: string      // URL에 쓰는 값 (안전)
+  title: string     // 화면에 보여줄 이름
+  db: string        // Supabase posts.board 에 저장/조회할 값
+}
+
+function safeDecode(v: string) {
+  try {
+    return decodeURIComponent(v)
+  } catch {
+    return v
+  }
+}
+
+export function resolveBoard(rawParam: string): BoardInfo {
+  // rawParam이 이미 디코딩된 경우도 있고, %EC... 처럼 인코딩된 문자열인 경우도 있어서 안전 처리
+  const raw = /%[0-9A-Fa-f]{2}/.test(rawParam) ? safeDecode(rawParam) : rawParam
+
+  // ✅ 특수문자(공백, ?) 들어간 보드는 URL 슬러그로 분리
+  if (raw === 'who' || raw === '이 사람 어때?' || raw === '이사람어때') {
+    return { slug: 'who', title: '이 사람 어때?', db: '이 사람 어때?' }
+  }
+
+  // 나머지는 그대로 사용 (징벌/주행/메타 등)
+  return { slug: raw, title: raw, db: raw }
+}
