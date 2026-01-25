@@ -1,8 +1,8 @@
 'use client'
 
 import Link from 'next/link'
-import { useMemo, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
+import { useMemo, useState } from 'react'
 
 import SiteHeader from '@/app/components/SiteHeader'
 import NoticeBanner from '@/app/components/NoticeBanner'
@@ -11,35 +11,40 @@ import { getSupabaseBrowser } from '@/lib/supabase'
 import { resolveBoard } from '@/lib/boards'
 
 export default function WritePage() {
-  const params = useParams()
   const router = useRouter()
+  const params = useParams()
+  const rawBoard = (params?.board as string) ?? ''
+  const info = useMemo(() => resolveBoard(rawBoard), [rawBoard])
 
-  const rawBoard = (params?.board ?? '') as string
-  const board = useMemo(() => resolveBoard(rawBoard), [rawBoard])
+  const boardSlug = useMemo(() => encodeURIComponent(info.slug), [info.slug])
 
   const supabase = useMemo(() => getSupabaseBrowser(), [])
 
   const [title, setTitle] = useState('')
   const [content, setContent] = useState('')
-  const [saving, setSaving] = useState(false)
+  const [loading, setLoading] = useState(false)
   const [msg, setMsg] = useState('')
 
   async function onSubmit() {
-    if (saving) return
+    if (loading) return
+    setLoading(true)
     setMsg('')
 
-    const t = title.trim()
-    const c = content.trim()
-    if (!t || !c) {
-      setMsg('제목과 내용을 입력해 주세요.')
-      return
-    }
-
-    setSaving(true)
     try {
+      const t = title.trim()
+      const c = content.trim()
+      if (!t || !c) {
+        setMsg('제목/본문을 입력해 주세요.')
+        return
+      }
+
       const { data, error } = await supabase
         .from('posts')
-        .insert([{ board, title: t, content: c }])
+        .insert({
+          board: info.db, // ✅ DB 저장값은 info.db
+          title: t,
+          content: c,
+        })
         .select('id')
         .single()
 
@@ -51,11 +56,12 @@ export default function WritePage() {
         return
       }
 
-      router.push(`/board/${encodeURIComponent(board)}/post/${id}`)
+      // ✅ URL에는 문자열인 boardSlug 사용
+      router.push(`/board/${boardSlug}/post/${id}`)
     } catch (e: any) {
       setMsg(`등록 실패: ${e?.message ?? '알 수 없는 오류'}`)
     } finally {
-      setSaving(false)
+      setLoading(false)
     }
   }
 
@@ -65,11 +71,9 @@ export default function WritePage() {
         <SiteHeader />
 
         <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold">{board} 글쓰기</h1>
-          <Link
-            href={`/board/${encodeURIComponent(board)}`}
-            className="text-sm text-zinc-300 hover:text-white"
-          >
+          <h1 className="text-2xl font-bold">{info.title} 글쓰기</h1>
+
+          <Link href={`/board/${boardSlug}`} className="text-sm text-zinc-300 hover:text-white">
             ← 게시판
           </Link>
         </div>
@@ -77,51 +81,32 @@ export default function WritePage() {
         <NoticeBanner />
 
         <section className="bg-zinc-900 rounded-xl p-4 space-y-3">
-          <div className="space-y-2">
-            <label className="text-sm text-zinc-300">제목</label>
-            <input
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="제목을 입력하세요"
-              className="w-full rounded-lg bg-zinc-950/40 px-3 py-2 outline-none border border-zinc-800 focus:border-zinc-600"
-            />
-          </div>
+          <input
+            className="w-full rounded-lg bg-zinc-950/40 px-3 py-2 outline-none"
+            placeholder="제목"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+          />
 
-          <div className="space-y-2">
-            <label className="text-sm text-zinc-300">내용</label>
-            <textarea
-              value={content}
-              onChange={(e) => setContent(e.target.value)}
-              placeholder="내용을 입력하세요"
-              rows={10}
-              className="w-full rounded-lg bg-zinc-950/40 px-3 py-2 outline-none border border-zinc-800 focus:border-zinc-600"
-            />
-          </div>
+          <textarea
+            className="w-full min-h-[220px] rounded-lg bg-zinc-950/40 px-3 py-2 outline-none"
+            placeholder="본문"
+            value={content}
+            onChange={(e) => setContent(e.target.value)}
+          />
 
-          {msg && (
-            <div className="text-sm text-zinc-300 bg-zinc-950/40 rounded-lg p-3">
-              {msg}
-            </div>
-          )}
+          {msg && <div className="text-sm text-zinc-300">{msg}</div>}
 
-          <div className="flex gap-2">
-            <button
-              onClick={onSubmit}
-              disabled={saving}
-              className="rounded-lg px-4 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-60 text-sm"
-            >
-              {saving ? '등록 중…' : '등록'}
-            </button>
-
-            <Link
-              href={`/board/${encodeURIComponent(board)}`}
-              className="rounded-lg px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-sm"
-            >
-              취소
-            </Link>
-          </div>
+          <button
+            onClick={onSubmit}
+            disabled={loading}
+            className="w-full rounded-lg bg-zinc-800 hover:bg-zinc-700 px-3 py-2 disabled:opacity-50"
+          >
+            {loading ? '등록 중…' : '등록'}
+          </button>
         </section>
       </div>
     </main>
   )
 }
+
